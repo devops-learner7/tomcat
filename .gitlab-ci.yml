@@ -1,0 +1,88 @@
+
+variables:
+  DOCKER_IMAGE_NAME: "tom"
+  MAVEN_CLI_OPTS: "-s .maven/settings.xml"
+  DOCKER_IMAGE: registry.gitlab.com/devops1341445/tomcat10-jakartaee9
+
+stages:
+  - build
+  #- sonar_scan
+  - push
+  - build_registry
+
+maven-build:
+  image: maven:3.8.8-eclipse-temurin-17
+  stage: build
+  script:
+    - echo "Building the Java Project Using Maven"
+    - mvn clean package
+  artifacts:
+    paths:
+      - "target/helloworld-1.1.war"
+    expire_in: 30 days
+  rules:
+    # Run only on the main branch and requires manual triggering
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+    # Skip this job if .gitlab-ci.yml or README.md is changed
+    - changes:
+        - .gitlab-ci.yml
+        - "README.md"
+      when: never
+  tags:
+    - ubuntu-runner
+
+docker-build:
+  image: docker:cli
+  stage: push
+  services:
+    - name: docker:dind
+      alias: docker
+  before_script:
+    - echo "Docker login"
+    - docker login -u "$CI_USER" -p "$CI_REGISTRY_PASS"
+  script:
+    - echo "Docker Build Starts"
+    - docker build -t "$DOCKER_IMAGE_NAME:$CI_PIPELINE_ID" .
+    - echo "Docker Build Completed"
+    - docker images
+    - echo "Saving the image as a .tar file"
+    - docker save -o helloworld-1.1.tar "$DOCKER_IMAGE_NAME:$CI_PIPELINE_ID"
+    - docker images
+    - echo "Renaming the image"
+    - docker tag "$DOCKER_IMAGE_NAME:$CI_PIPELINE_ID" "suraen/$DOCKER_IMAGE_NAME:$CI_PIPELINE_ID"
+    - echo "Docker Push Starts"
+    - docker push "suraen/$DOCKER_IMAGE_NAME:$CI_PIPELINE_ID"
+    - echo "Docker Push Completes"
+  artifacts:
+    paths:
+      - helloworld-1.1.tar
+    expire_in: 30 days
+
+  
+
+
+
+push-registry:
+  image: docker:cli
+  stage: build_registry
+  dependencies:
+    - "docker-build"
+  services:
+    - docker:dind
+  before_script:
+    - echo "Docker login to GitLab Registry"
+    #- echo "glpat-S6os5c6mn6T2xPxGr_YE" | docker login registry.gitlab.com -u devops-learner7 --password-stdin
+    - docker login registry.gitlab.com -u $CI_REGISTRY_USER -p $GITLAB_PAT
+  script:
+    - echo "Loading Docker image from .tar file"
+    - docker load -i helloworld-1.1.tar
+    - docker tag "$DOCKER_IMAGE_NAME:$CI_PIPELINE_ID" $DOCKER_IMAGE:$CI_PIPELINE_ID
+    - docker images
+   
+    #- echo "Docker Push to GitLab Registry Starts"
+    #- docker build -t registry.gitlab.com/devops1341445/tomcat10-jakartaee9:$CI_PIPELINE_ID .
+    - sleep 10s
+    - docker push "$DOCKER_IMAGE:$CI_PIPELINE_ID"
+    - echo "Docker Push Completes"
+  
